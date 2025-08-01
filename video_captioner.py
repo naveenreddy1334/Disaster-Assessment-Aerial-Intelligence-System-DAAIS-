@@ -20,7 +20,7 @@ from geopy.distance import geodesic, distance
 import geopy
 
 class PathPlanningIntegration:
-    def __init__(self):
+    def _init_(self):
         self.scan_radius_m = 850  # Default scanning radius
         self.spacing_m = 150      # Zigzag pattern spacing
         self.drone_speed_mps = 12 # Drone speed in m/s (43.2 km/h)
@@ -59,7 +59,7 @@ class PathPlanningIntegration:
         }
 
 class DisasterSurveillanceSystem:
-    def __init__(self):
+    def _init_(self):
         self.processor, self.model = self.load_blip()
         self.detections = []
         self.disaster_counts = {}
@@ -600,5 +600,5 @@ def main():
     # Run surveillance mission (18 minutes = 1080 seconds)
     surveillance_system.run_surveillance(video_source=0, surveillance_duration=1080)
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     main()
