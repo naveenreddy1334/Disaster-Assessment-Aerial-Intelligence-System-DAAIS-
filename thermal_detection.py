@@ -1,409 +1,404 @@
+#!/usr/bin/env python3
+"""
+Thermal-Only Human Detection System
+Uses MLX90640 thermal camera to detect humans based on temperature patterns
+"""
+
+import os
+os.environ['QT_QPA_PLATFORM'] = 'xcb'  # Fix Qt platform plugin issue
+
 import cv2
 import numpy as np
-import torch
 import time
-from collections import deque
-import math
 import warnings
+import threading
+import queue
+import board
+import busio
+import adafruit_mlx90640
+from scipy import ndimage
 
 warnings.filterwarnings('ignore')
 
 
-class DualViewEOIRDetector:
-    def __init__(self, model_size='n', conf_thresh=0.5, iou_thresh=0.5):
-        self.conf_thresh = conf_thresh
-        self.iou_thresh = iou_thresh
-        self.fps_history = deque(maxlen=30)
-        self.heat_signatures = {}
-        self.last_thermal = None
+class ThermalHumanDetector:
+    def _init_(self):
         self.frame_count = 0
-        self.detection_memory = {}
-        self.ambient_cache = None
-        self.thermal_kernel = cv2.getGaussianKernel(25, 0)
+        self.last_detections = []
+        self.detection_history = []
         
-        # Raspberry Pi optimizations
-        self.rpi_optimizations = True
-        self.process_every_n_frames = 3
-        self.thermal_update_interval = 5
+        # Thermal detection parameters
+        self.human_temp_min = 30.0  # Minimum human body temperature
+        self.human_temp_max = 40.0  # Maximum human body temperature
+        self.min_human_area = 15    # Minimum pixels for human detection
+        self.max_human_area = 200   # Maximum pixels for human detection
+        
+        # Real thermal camera setup
+        self.thermal_queue = queue.Queue(maxsize=3)
+        self.current_thermal = None
+        self.thermal_running = True
+        self.ambient_temp = 25.0    # Estimated ambient temperature
+        
+        # Initialize thermal camera
+        self._init_thermal_camera()
+        
+        print("Thermal-Only Human Detection System initialized")
 
-        # Setup device
-        self.device = torch.device('cpu')
-        self._setup_device()
-        self._load_model(model_size)
-        self._init_thermal_profiles()
-
-    def _setup_device(self):
-        print("💻 Raspberry Pi CPU mode - optimized")
-        torch.set_num_threads(2)
-
-    def _load_model(self, size):
+    def _init_thermal_camera(self):
+        """Initialize MLX90640 thermal camera"""
         try:
-            from ultralytics import YOLO
-
-            model_name = 'yolov8n'  # Force nano model for RPi
-            print(f"🔧 Loading {model_name} (RPi optimized)...")
-
-            self.model = YOLO(f'{model_name}.pt')
-            self.model.to(self.device)
-            self.model.conf = self.conf_thresh
-            self.model.iou = self.iou_thresh
-            self.model.max_det = 30
-            self.model.amp = False
-
-            self.class_names = list(self.model.names.values())
-            print(f"✅ Model ready | Classes: {len(self.class_names)}")
-            return True
-
-        except ImportError:
-            print("❌ Install ultralytics: pip install ultralytics")
-            return False
-        except Exception as e:
-            print(f"❌ Model error: {e}")
-            return False
-
-    def _init_thermal_profiles(self):
-        self.thermal_profiles = {
-            'person': (0.85, 0.10, 1.0),
-            'car': (0.80, 0.12, 0.9),
-            'dog': (0.82, 0.08, 0.8),
-            'cat': (0.80, 0.09, 0.7),
-            'motorcycle': (0.78, 0.11, 0.8),
-            'bus': (0.77, 0.05, 1.1),
-            'truck': (0.76, 0.06, 1.0),
-            'bicycle': (0.60, 0.10, 0.7),
-            'chair': (0.35, 0.05, 0.6),
-            'book': (0.25, 0.03, 0.4),
-            'cell phone': (0.30, 0.04, 0.3),
-            'bottle': (0.20, 0.03, 0.3),
-            '*default*': (0.40, 0.10, 0.6)
-        }
-
-    def _get_thermal_profile(self, class_name):
-        return self.thermal_profiles.get(
-            class_name,
-            self.thermal_profiles['*default*']
-        )
-
-    def _generate_ambient(self, height, width):
-        if self.ambient_cache is None or self.ambient_cache.shape != (height, width):
-            cy, cx = height // 2, width // 2
-            y, x = np.indices((height, width))
-            dist = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
-            max_dist = np.sqrt(cx ** 2 + cy ** 2)
-            ambient = np.maximum(0.2, 0.4 * (1 - dist / max_dist))
-            ambient = cv2.sepFilter2D(ambient, -1, self.thermal_kernel, self.thermal_kernel)
-            self.ambient_cache = ambient
-        return self.ambient_cache
-
-    def generate_thermal(self, frame, detections):
-        # Update thermal map less frequently on RPi
-        if self.frame_count % self.thermal_update_interval != 0 and self.last_thermal is not None:
-            return self.last_thermal
+            print("Initializing MLX90640 thermal camera...")
+            self.i2c = busio.I2C(board.SCL, board.SDA, frequency=800000)
+            self.mlx = adafruit_mlx90640.MLX90640(self.i2c)
+            self.mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_4_HZ
             
-        height, width = frame.shape[:2]
-        ambient = self._generate_ambient(height, width)
-        heat_map = ambient.copy()
+            # Thermal data storage
+            self.thermal_frame = [0] * 768
+            
+            # Start thermal data collection thread
+            self.thermal_thread = threading.Thread(target=self._collect_thermal_data)
+            self.thermal_thread.daemon = True
+            self.thermal_thread.start()
+            
+            print("✅ MLX90640 thermal camera ready")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Thermal camera initialization failed: {e}")
+            return False
 
-        # Precompute object heat signatures
-        obj_temps = []
-        obj_props = []
-        obj_centers = []
-        obj_radii = []
+    def _collect_thermal_data(self):
+        """Continuously collect thermal data in background"""
+        while self.thermal_running:
+            try:
+                self.mlx.getFrame(self.thermal_frame)
+                thermal_array = np.array(self.thermal_frame).reshape((24, 32))
+                
+                # Update ambient temperature estimate
+                self.ambient_temp = np.percentile(thermal_array, 10)  # 10th percentile as ambient
+                
+                # Add to queue
+                if not self.thermal_queue.full():
+                    self.thermal_queue.put(thermal_array)
+                else:
+                    try:
+                        self.thermal_queue.get_nowait()
+                        self.thermal_queue.put(thermal_array)
+                    except queue.Empty:
+                        pass
+                        
+            except ValueError:
+                continue
+            except Exception as e:
+                print(f"Thermal data error: {e}")
+                time.sleep(0.1)
 
-        for det in detections:
-            x1, y1, x2, y2 = det['bbox']
-            class_name = det['class_name']
-            base_temp, temp_var, heat_radius = self._get_thermal_profile(class_name)
+    def get_thermal_data(self):
+        """Get latest thermal camera data"""
+        if not self.thermal_queue.empty():
+            try:
+                self.current_thermal = self.thermal_queue.get_nowait()
+            except queue.Empty:
+                pass
+        
+        return self.current_thermal
 
-            obj_id = f"{class_name}_{x1}_{y1}"
-            if obj_id not in self.heat_signatures:
-                self.heat_signatures[obj_id] = base_temp + np.random.uniform(-temp_var, temp_var)
-
-            center_x, center_y = (x1 + x2) // 2, (y1 + y2) // 2
-            diagonal = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-            max_rs = diagonal * heat_radius
-
-            obj_temps.append(self.heat_signatures[obj_id])
-            obj_centers.append((center_x, center_y))
-            obj_radii.append(max_rs)
-            obj_props.append((x1, y1, x2, y2))
-
-        # Create heat map using vectorized operations
-        y, x = np.indices((height, width))
-        for i in range(len(obj_temps)):
-            cx, cy = obj_centers[i]
-            dist = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
-            intensity = np.maximum(0, 1.0 - np.minimum(1.0, dist / (obj_radii[i] + 1e-5)))
-            obj_heat = obj_temps[i] * intensity
-
-            # Apply only within bounding box
-            x1, y1, x2, y2 = obj_props[i]
-            region = (x >= x1) & (x < x2) & (y >= y1) & (y < y2)
-            heat_map[region] = np.maximum(heat_map[region], obj_heat[region])
-
-        heat_map = np.clip(heat_map * 255, 0, 255).astype(np.uint8)
-        thermal = cv2.applyColorMap(heat_map, cv2.COLORMAP_INFERNO)
-
-        noise = np.random.normal(0, 6, thermal.shape).astype(np.uint8)
-        thermal = cv2.add(thermal, noise)
-
-        if self.last_thermal is not None:
-            thermal = cv2.addWeighted(thermal, 0.8, self.last_thermal, 0.2, 0)
-
-        self.last_thermal = thermal.copy()
-        return thermal
-
-    def detect(self, frame):
+    def detect_humans_thermal(self, thermal_array):
+        """Detect humans using thermal data only"""
+        if thermal_array is None:
+            return []
+        
         self.frame_count += 1
         
-        # Skip frames for better performance on RPi
-        if self.frame_count % self.process_every_n_frames != 0 and hasattr(self, 'last_detections'):
-            return self.last_detections
+        # Create binary mask for human temperature range
+        human_mask = ((thermal_array >= self.human_temp_min) & 
+                     (thermal_array <= self.human_temp_max)).astype(np.uint8)
         
-        # Reduce image size for faster processing
-        height, width = frame.shape[:2]
-        scale_factor = 0.7
-        small_frame = cv2.resize(frame, 
-                               (int(width * scale_factor), int(height * scale_factor)))
-
-        try:
-            with torch.no_grad():
-                results = self.model(small_frame, imgsz=416, verbose=False)
-
-            detections = []
-            for result in results:
-                if result.boxes is None:
-                    continue
-
-                boxes = result.boxes.xyxy.cpu().numpy()
-                confs = result.boxes.conf.cpu().numpy()
-                class_ids = result.boxes.cls.cpu().numpy().astype(int)
+        # Also look for areas significantly warmer than ambient
+        temp_diff_mask = (thermal_array > (self.ambient_temp + 5.0)).astype(np.uint8)
+        
+        # Combine masks
+        combined_mask = cv2.bitwise_or(human_mask, temp_diff_mask)
+        
+        # Morphological operations to clean up the mask
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel)
+        combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel)
+        
+        # Find connected components (potential humans)
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(combined_mask, connectivity=8)
+        
+        detections = []
+        
+        for i in range(1, num_labels):  # Skip background (label 0)
+            area = stats[i, cv2.CC_STAT_AREA]
+            
+            # Filter by area (human size)
+            if self.min_human_area <= area <= self.max_human_area:
+                x, y, w, h = stats[i, cv2.CC_STAT_LEFT], stats[i, cv2.CC_STAT_TOP], stats[i, cv2.CC_STAT_WIDTH], stats[i, cv2.CC_STAT_HEIGHT]
                 
-                # Scale boxes back to original size
-                boxes[:, [0, 2]] *= (width / (width * scale_factor))
-                boxes[:, [1, 3]] *= (height / (height * scale_factor))
+                # Calculate center
+                center_x, center_y = int(centroids[i][0]), int(centroids[i][1])
+                
+                # Extract temperature data for this region
+                region_mask = (labels == i)
+                region_temps = thermal_array[region_mask]
+                
+                if len(region_temps) > 0:
+                    avg_temp = region_temps.mean()
+                    max_temp = region_temps.max()
+                    min_temp = region_temps.min()
+                    
+                    # Calculate confidence based on temperature characteristics
+                    temp_range = max_temp - min_temp
+                    temp_consistency = 1.0 - (temp_range / 10.0)  # More consistent = higher confidence
+                    temp_human_like = 1.0 if (32.0 <= avg_temp <= 38.0) else 0.5  # Body temp range
+                    
+                    confidence = min(1.0, (temp_consistency * temp_human_like * area / 50.0))
+                    
+                    # Filter by minimum confidence
+                    if confidence > 0.3:
+                        detections.append({
+                            'bbox': (x, y, x + w, y + h),
+                            'center': (center_x, center_y),
+                            'confidence': confidence,
+                            'avg_temp': avg_temp,
+                            'max_temp': max_temp,
+                            'min_temp': min_temp,
+                            'area': area,
+                            'thermal_coords': (x, y, w, h)  # Keep thermal coordinates
+                        })
+        
+        # Sort by confidence
+        detections.sort(key=lambda x: x['confidence'], reverse=True)
+        
+        # Temporal filtering for stability
+        self.last_detections = self._apply_temporal_filter(detections)
+        
+        return self.last_detections
 
-                valid_mask = (confs >= self.conf_thresh)
-                boxes = boxes[valid_mask]
-                confs = confs[valid_mask]
-                class_ids = class_ids[valid_mask]
+    def _apply_temporal_filter(self, detections):
+        """Apply temporal filtering to reduce false positives"""
+        # Keep detection history
+        self.detection_history.append(detections)
+        if len(self.detection_history) > 5:
+            self.detection_history.pop(0)
+        
+        # For now, just return current detections
+        # Could implement more sophisticated tracking here
+        return detections
 
-                for i in range(len(boxes)):
-                    x1, y1, x2, y2 = map(int, boxes[i])
-                    if (x2 - x1) < 15 or (y2 - y1) < 15:
-                        continue
-
-                    class_name = self.class_names[class_ids[i]]
-                    detections.append({
-                        'bbox': (x1, y1, x2, y2),
-                        'confidence': float(confs[i]),
-                        'class_id': int(class_ids[i]),
-                        'class_name': class_name
-                    })
-
-            detections = self._stability_filter(detections)
-            self.last_detections = detections
-            return detections
-
-        except Exception as e:
-            print(f"⚠️ Detection error: {e}")
-            return getattr(self, 'last_detections', [])
-
-    def _stability_filter(self, detections):
-        current_frame = self.frame_count
-        stable_dets = []
-
-        for det in detections:
-            cls_name = det['class_name']
-            conf = det['confidence']
-            key = f"{cls_name}_{det['bbox'][0]}_{det['bbox'][1]}"
-
-            if key not in self.detection_memory:
-                self.detection_memory[key] = {
-                    'count': 1,
-                    'total_conf': conf,
-                    'last_seen': current_frame
-                }
-                if conf > self.conf_thresh + 0.2:
-                    det['stability'] = 1.0
-                    stable_dets.append(det)
-            else:
-                mem = self.detection_memory[key]
-                mem['count'] += 1
-                mem['total_conf'] += conf
-                mem['last_seen'] = current_frame
-
-                if mem['count'] > 2:
-                    det['stability'] = min(1.0, mem['count'] / 5)
-                    stable_dets.append(det)
-
-        # Cleanup old detections
-        for key in list(self.detection_memory.keys()):
-            if current_frame - self.detection_memory[key]['last_seen'] > 30:
-                del self.detection_memory[key]
-
-        return stable_dets
-
-    def draw_detections(self, frame, detections, mode='rgb'):
-        annotated = frame.copy()
-        for det in detections:
-            x1, y1, x2, y2 = det['bbox']
-            cls_name = det['class_name']
-            conf = det['confidence']
-
-            if mode == 'thermal':
-                base_temp, _, _ = self._get_thermal_profile(cls_name)
-                if base_temp > 0.7:
-                    color = (0, 255, 255)
-                    thickness = 2
-                elif base_temp > 0.5:
-                    color = (0, 165, 255)
-                    thickness = 1
-                else:
-                    color = (255, 255, 255)
-                    thickness = 1
-            else:
-                color = (0, 255, 0)
-                thickness = 2
-
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, thickness)
-
-            if mode == 'thermal':
-                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                cv2.circle(annotated, (cx, cy), 3, color, -1)
-
-            label = f"{cls_name} {conf:.1f}"
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            cv2.rectangle(annotated, (x1, y1 - th - 5), (x1 + tw, y1), color, -1)
-
-            text_color = (0, 0, 0) if mode == 'thermal' else (255, 255, 255)
-            cv2.putText(annotated, label, (x1, y1 - 5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, text_color, 1)
-
-        return annotated
-
-    def draw_ui_overlay(self, frame, detections, fps, mode, window_size):
-        h, w = window_size[:2]
-        cv2.rectangle(frame, (0, 0), (w, 35), (0, 0, 0), -1)
-
-        if mode == 'thermal':
-            title = "🔥 THERMAL IMAGING"
-            title_color = (0, 200, 255)
+    def create_thermal_visualization(self, thermal_array, detections, target_size=(640, 480)):
+        """Create thermal visualization with human detections"""
+        if thermal_array is None:
+            return np.zeros((target_size[1], target_size[0], 3), dtype=np.uint8)
+        
+        # Normalize thermal data for visualization
+        temp_min, temp_max = thermal_array.min(), thermal_array.max()
+        
+        if temp_max > temp_min:
+            normalized = ((thermal_array - temp_min) / (temp_max - temp_min) * 255).astype(np.uint8)
         else:
-            title = "📹 RGB CAMERA"
-            title_color = (255, 255, 255)
+            normalized = np.full_like(thermal_array, 128, dtype=np.uint8)
+        
+        # Resize thermal to target size
+        thermal_resized = cv2.resize(normalized, target_size, interpolation=cv2.INTER_CUBIC)
+        
+        # Apply colormap
+        thermal_colored = cv2.applyColorMap(thermal_resized, cv2.COLORMAP_JET)
+        
+        # Scale detection coordinates to display size
+        scale_x = target_size[0] / 32
+        scale_y = target_size[1] / 24
+        
+        # Draw detections on thermal image
+        for i, det in enumerate(detections):
+            thermal_x, thermal_y, thermal_w, thermal_h = det['thermal_coords']
+            
+            # Scale to display coordinates
+            x1 = int(thermal_x * scale_x)
+            y1 = int(thermal_y * scale_y)
+            x2 = int((thermal_x + thermal_w) * scale_x)
+            y2 = int((thermal_y + thermal_h) * scale_y)
+            
+            confidence = det['confidence']
+            avg_temp = det['avg_temp']
+            
+            # Color based on confidence and temperature
+            if avg_temp > 35.0:  # Very human-like temperature
+                color = (0, 255, 0)  # Green
+                thickness = 3
+            elif avg_temp > 32.0:  # Human-like temperature
+                color = (0, 255, 255)  # Yellow
+                thickness = 2
+            else:  # Warm but uncertain
+                color = (0, 165, 255)  # Orange
+                thickness = 2
+            
+            # Draw bounding box
+            cv2.rectangle(thermal_colored, (x1, y1), (x2, y2), color, thickness)
+            
+            # Draw center point
+            center_x = (x1 + x2) // 2
+            center_y = (y1 + y2) // 2
+            cv2.circle(thermal_colored, (center_x, center_y), 4, color, -1)
+            
+            # Temperature label
+            label = f"Human {i+1}: {avg_temp:.1f}°C ({confidence:.2f})"
+            
+            # Text background
+            (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            cv2.rectangle(thermal_colored, (x1, y1 - text_h - 8), (x1 + text_w + 4, y1), color, -1)
+            
+            # Text
+            cv2.putText(thermal_colored, label, (x1 + 2, y1 - 4),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+        
+        return thermal_colored, temp_min, temp_max
 
-        cv2.putText(frame, title, (10, 25),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, title_color, 2)
-
-        stats = f"FPS:{fps:.1f} OBJ:{len(detections)}"
-        cv2.putText(frame, stats, (w - 120, 25),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-
-        if mode == 'thermal':
-            cx, cy = w // 2, h // 2
-            crosshair_color = (0, 255, 255)
-            cv2.line(frame, (cx - 15, cy), (cx + 15, cy), crosshair_color, 1)
-            cv2.line(frame, (cx, cy - 15), (cx, cy + 15), crosshair_color, 1)
-
+    def draw_thermal_info(self, frame, thermal_array, detections):
+        """Draw thermal information panel"""
+        if thermal_array is None:
+            return frame
+        
+        h, w = frame.shape[:2]
+        
+        # Info panel
+        panel_width = 280
+        panel_height = 120
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (w - panel_width, 0), (w, panel_height), (0, 0, 0), -1)
+        frame = cv2.addWeighted(frame, 0.8, overlay, 0.2, 0)
+        
+        # Thermal statistics
+        temp_min, temp_max = thermal_array.min(), thermal_array.max()
+        temp_avg = thermal_array.mean()
+        
+        y_offset = 20
+        cv2.putText(frame, "THERMAL HUMAN DETECTION", (w - panel_width + 10, y_offset),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        
+        y_offset += 25
+        cv2.putText(frame, f"Temperature Range: {temp_min:.1f} - {temp_max:.1f}°C", 
+                   (w - panel_width + 10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+        y_offset += 20
+        cv2.putText(frame, f"Average: {temp_avg:.1f}°C | Ambient: {self.ambient_temp:.1f}°C", 
+                   (w - panel_width + 10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+        y_offset += 20
+        cv2.putText(frame, f"Humans Detected: {len(detections)}", 
+                   (w - panel_width + 10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+        
+        # Individual human info
+        if detections:
+            y_offset += 20
+            cv2.putText(frame, "Detected Temperatures:", 
+                       (w - panel_width + 10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+            
+            for i, det in enumerate(detections[:3]):  # Show up to 3 humans
+                y_offset += 15
+                temp_text = f"  Human {i+1}: {det['avg_temp']:.1f}°C"
+                cv2.putText(frame, temp_text, 
+                           (w - panel_width + 10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 0), 1)
+        
         return frame
+
+    def stop(self):
+        """Stop thermal data collection"""
+        self.thermal_running = False
+        if hasattr(self, 'thermal_thread') and self.thermal_thread.is_alive():
+            self.thermal_thread.join()
 
 
 def main():
-    print("🔥 DUAL VIEW EOIR DETECTION SYSTEM")
-    print("🌡️ Thermal | 📹 RGB")
-    print("=" * 40)
-
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("❌ No camera available")
+    print("🔥 THERMAL-ONLY HUMAN DETECTION SYSTEM")
+    print("MLX90640 Temperature-Based Human Detection")
+    print("=" * 50)
+    
+    # Initialize detector
+    detector = ThermalHumanDetector()
+    
+    if not hasattr(detector, 'thermal_thread'):
+        print("❌ Thermal camera initialization failed")
         return
-
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    cap.set(cv2.CAP_PROP_FPS, 30)
-
-    detector = DualViewEOIRDetector(
-        model_size='n',
-        conf_thresh=0.4,
-        iou_thresh=0.45
-    )
-
-    if not hasattr(detector, 'model'):
-        return
-
-    print("\nCONTROLS:")
+    
+    print("\n🎮 CONTROLS:")
     print("  Q - Quit")
-    print("  S - Save both views")
-    print("  + - Increase sensitivity")
-    print("  - - Decrease sensitivity")
-    print("  R - Reset thermal signatures")
-    print("\nStarting dual view system...")
-
-    fps_counter = deque(maxlen=10)
+    print("  S - Save thermal frame")
+    print("  + - Increase sensitivity (lower min temp)")
+    print("  - - Decrease sensitivity (higher min temp)")
+    print("  A - Adjust ambient temperature")
+    print("\n🚀 Starting thermal human detection...")
+    
+    # Performance tracking
+    fps_history = []
     last_time = time.time()
-    window_width = 400
-    window_height = 300
-
+    save_counter = 0
+    
     try:
         while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-
-            frame_resized = cv2.resize(frame, (window_width, window_height))
-            start_time = time.time()
-            detections = detector.detect(frame_resized)
-            thermal_view = detector.generate_thermal(frame_resized, detections)
-            rgb_view = frame_resized.copy()
-
-            thermal_annotated = detector.draw_detections(thermal_view, detections, 'thermal')
-            rgb_annotated = detector.draw_detections(rgb_view, detections, 'rgb')
-
-            current_time = time.time()
-            fps = 1 / (current_time - last_time + 1e-5)
-            last_time = current_time
-            fps_counter.append(fps)
-            avg_fps = sum(fps_counter) / len(fps_counter)
-
-            thermal_final = detector.draw_ui_overlay(thermal_annotated, detections,
-                                                     avg_fps, 'thermal',
-                                                     (window_width, window_height))
-            rgb_final = detector.draw_ui_overlay(rgb_annotated, detections,
-                                                 avg_fps, 'rgb',
-                                                 (window_width, window_height))
-
-            combined_view = np.hstack((thermal_final, rgb_final))
-            cv2.imshow('🔥 DUAL VIEW EOIR SYSTEM - Thermal | RGB', combined_view)
-
+            # Get thermal data
+            thermal_array = detector.get_thermal_data()
+            
+            if thermal_array is not None:
+                # Detect humans using thermal data
+                detections = detector.detect_humans_thermal(thermal_array)
+                
+                # Create thermal visualization
+                thermal_display, temp_min, temp_max = detector.create_thermal_visualization(
+                    thermal_array, detections, (640, 480)
+                )
+                
+                # Add information panel
+                final_frame = detector.draw_thermal_info(thermal_display, thermal_array, detections)
+                
+                # Calculate FPS
+                current_time = time.time()
+                fps = 1.0 / (current_time - last_time + 0.001)
+                last_time = current_time
+                
+                fps_history.append(fps)
+                if len(fps_history) > 10:
+                    fps_history.pop(0)
+                avg_fps = sum(fps_history) / len(fps_history)
+                
+                # Add main title
+                cv2.putText(final_frame, f"THERMAL HUMAN DETECTION | FPS: {avg_fps:.0f}", 
+                           (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                
+                # Display
+                cv2.imshow('Thermal Human Detection', final_frame)
+            
+            # Handle controls
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
                 break
             elif key == ord('s'):
-                timestamp = time.strftime("%Y%m%d_%H%M%S")
-                cv2.imwrite(f"thermal_{timestamp}.jpg", thermal_final)
-                cv2.imwrite(f"rgb_{timestamp}.jpg", rgb_final)
-                cv2.imwrite(f"combined_{timestamp}.jpg", combined_view)
-                print(f"💾 Saved both views with timestamp {timestamp}")
-            elif key in (ord('+'), ord('=')):
-                detector.conf_thresh = max(0.1, detector.conf_thresh - 0.05)
-                detector.model.conf = detector.conf_thresh
-                print(f"🔼 Sensitivity: {detector.conf_thresh:.2f}")
+                if thermal_array is not None:
+                    timestamp = int(time.time())
+                    filename = f"thermal_humans_{timestamp}.jpg"
+                    cv2.imwrite(filename, final_frame)
+                    save_counter += 1
+                    print(f"💾 Saved: {filename} (#{save_counter})")
+            elif key == ord('+') or key == ord('='):
+                detector.human_temp_min = max(25.0, detector.human_temp_min - 1.0)
+                print(f"📈 Increased sensitivity - Min temp: {detector.human_temp_min:.1f}°C")
             elif key == ord('-'):
-                detector.conf_thresh = min(0.9, detector.conf_thresh + 0.05)
-                detector.model.conf = detector.conf_thresh
-                print(f"🔽 Sensitivity: {detector.conf_thresh:.2f}")
-            elif key == ord('r'):
-                detector.heat_signatures = {}
-                print("🔄 Reset thermal signatures")
-
+                detector.human_temp_min = min(35.0, detector.human_temp_min + 1.0)
+                print(f"📉 Decreased sensitivity - Min temp: {detector.human_temp_min:.1f}°C")
+            elif key == ord('a'):
+                if thermal_array is not None:
+                    detector.ambient_temp = np.percentile(thermal_array, 15)
+                    print(f"🌡 Ambient temperature updated: {detector.ambient_temp:.1f}°C")
+    
     except KeyboardInterrupt:
-        print("\nStopped by user")
+        print("\n⏹ Stopped by user")
     finally:
-        cap.release()
+        detector.stop()
         cv2.destroyAllWindows()
-        print("Dual view system shutdown")
+        print("🔌 System shutdown complete")
 
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     main()
