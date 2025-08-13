@@ -36,9 +36,7 @@ Disaster Assessment Aerial Intelligence System (DAAIS) aims to:
 
 ## 🖼️ Sample Output
 
-https://github.com/user-attachments/assets/63c3ac4e-f53c-490c-a9e7-b3bc8a06bd97
 
-https://github.com/user-attachments/assets/1271205c-0fb9-43c7-9bc0-571b53ebd6fa
 
 **Example outputs include:**
 - Before vs After disaster detection comparisons
