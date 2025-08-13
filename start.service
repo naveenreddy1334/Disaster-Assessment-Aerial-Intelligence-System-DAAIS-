@@ -1,0 +1,39 @@
+[Unit]
+Description=Disaster Surveillance Auto-Start System
+Documentation=https://github.com/your-repo/disaster-surveillance
+After=network.target sound.target
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/home/pi/disaster-surveillance
+ExecStartPre=/bin/sleep 30
+ExecStart=/usr/bin/python3 /home/pi/disaster-surveillance/disaster_surveillance_startup.py
+ExecStop=/bin/kill -TERM $MAINPID
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONPATH=/home/pi/disaster-surveillance
+Environment=DISPLAY=:0
+Environment=QT_QPA_PLATFORM=xcb
+
+# Security settings
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/pi/disaster-surveillance
+ReadWritePaths=/var/log
+ReadWritePaths=/tmp
+
+# Resource limits
+TimeoutStartSec=120
+TimeoutStopSec=30
+MemoryMax=2G
+CPUQuota=90%
+
+[Install]
+WantedBy=multi-user.target
