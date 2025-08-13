@@ -54,9 +54,6 @@ https://github.com/user-attachments/assets/1271205c-0fb9-43c7-9bc0-571b53ebd6fa
 │   ├── 📜 thermal.py      # Thermal imaging processing script
 │   ├── 📜 disaster.py     # Main disaster detection script
 │   ├── 📜 startup.py      # Application startup script
-│   ├── 📜 train_model.py  # Model training automation
-│   ├── 📜 generate_report.py  # PDF report generation script
-│   └── 📜 export_data.py  # JSON data export utility
 ├── 📜 requirements.txt    # Python dependencies
 ├── 📜 start.service       # System service configuration
 ├── 📜 config.yaml        # Configuration settings
