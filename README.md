@@ -36,6 +36,20 @@ Disaster Assessment Aerial Intelligence System (DAAIS) aims to:
 
 ## 🖼️ Sample Output
 
+### Fire Detection
+<p align="center">
+  <img src="https://github.com/naveenreddy1334/Disaster-Assessment-Aerial-Intelligence-System-DAAIS-/blob/main/Fire.gif?raw=true" alt="Fire Detection Demo" />
+</p>
+
+### Flood Detection
+<p align="center">
+  <img src="https://github.com/naveenreddy1334/Disaster-Assessment-Aerial-Intelligence-System-DAAIS-/blob/main/Flood.gif?raw=true" alt="Flood Detection Demo" />
+</p>
+
+### Thermal Analysis
+<p align="center">
+  <img src="https://github.com/naveenreddy1334/Disaster-Assessment-Aerial-Intelligence-System-DAAIS-/blob/main/Thermal.gif?raw=true" alt="Thermal Analysis Demo" />
+</p>
 
 
 **Example outputs include:**
