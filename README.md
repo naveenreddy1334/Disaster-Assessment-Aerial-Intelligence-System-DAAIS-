@@ -1,10 +1,10 @@
-# Disaster Assessment Aerial Intelligence System (DAAIS)
+# Disaster Assessment Aerial System (DAAS)
 
 A smart and efficient aerial intelligence system designed for rapid disaster assessment using drone imagery and computer vision. This project utilizes deep learning and geospatial analysis to detect and classify disaster-impacted areas, enabling timely responses and resource allocation.
 
 ## Project Overview
 
-Disaster Assessment Aerial Intelligence System (DAAIS) aims to:
+Disaster Assessment Aerial System (DAAS) aims to:
 - Automate the detection of disaster zones from aerial/drone images.
 - Classify the severity of damage using machine learning.
 - Provide visual and geospatial insights for emergency response teams.
@@ -38,17 +38,17 @@ Disaster Assessment Aerial Intelligence System (DAAIS) aims to:
 
 ### Fire Detection
 <p align="center">
-  <img src="https://github.com/naveenreddy1334/Disaster-Assessment-Aerial-Intelligence-System-DAAIS-/blob/main/Fire.gif?raw=true" alt="Fire Detection Demo" />
+  <img src="https://github.com/naveenreddy1334/Disaster-Assessment-Aerial-Intelligence-System-DAAS-/blob/main/Fire.gif?raw=true" alt="Fire Detection Demo" />
 </p>
 
 ### Flood Detection
 <p align="center">
-  <img src="https://github.com/naveenreddy1334/Disaster-Assessment-Aerial-Intelligence-System-DAAIS-/blob/main/Flood.gif?raw=true" alt="Flood Detection Demo" />
+  <img src="https://github.com/naveenreddy1334/Disaster-Assessment-Aerial-Intelligence-System-DAAS-/blob/main/Flood.gif?raw=true" alt="Flood Detection Demo" />
 </p>
 
 ### Thermal Analysis
 <p align="center">
-  <img src="https://github.com/naveenreddy1334/Disaster-Assessment-Aerial-Intelligence-System-DAAIS-/blob/main/Thermal.gif?raw=true" alt="Thermal Analysis Demo" />
+  <img src="https://github.com/naveenreddy1334/Disaster-Assessment-Aerial-Intelligence-System-DAAS-/blob/main/Thermal.gif?raw=true" alt="Thermal Analysis Demo" />
 </p>
 
 
@@ -61,7 +61,7 @@ Disaster Assessment Aerial Intelligence System (DAAIS) aims to:
 ## 📁 Folder Structure
 
 ```bash
-📦 DAAIS/
+📦 DAAS/
 ├── 📂 scripts/            # Automation and deployment scripts
 │   ├── 📜 thermal.py      # Thermal imaging processing script
 │   ├── 📜 disaster.py     # Main disaster detection script
@@ -76,7 +76,7 @@ Disaster Assessment Aerial Intelligence System (DAAIS) aims to:
 
 ### Prerequisites
 
-Before getting started with DAAIS, ensure your runtime environment meets the following requirements:
+Before getting started with DAAS, ensure your runtime environment meets the following requirements:
 
 - Python 3.8+ (recommended: Python 3.9+)
 - pip or conda package manager
@@ -84,24 +84,24 @@ Before getting started with DAAIS, ensure your runtime environment meets the fol
 
 ### Installation
 
-Install DAAIS using the following steps:
+Install DAAS using the following steps:
 
 **Build from source:**
 
-1. Clone the DAAIS repository:
+1. Clone the DAAS repository:
 ```bash
-git clone https://github.com/naveenreddy1334/Disaster-Assessment-Aerial-Intelligence-System-DAAIS-
+git clone https://github.com/naveenreddy1334/Disaster-Assessment-Aerial-Intelligence-System-DAAS-
 ```
 
 2. Navigate to the project directory:
 ```bash
-cd Disaster-Assessment-Aerial-Intelligence-System-DAAIS-
+cd Disaster-Assessment-Aerial-Intelligence-System-DAAS-
 ```
 
 3. Create a virtual environment:
 ```bash
-python -m venv daais_env
-source daais_env/bin/activate  # On Windows: daais_env\Scripts\activate
+python -m venv daas_env
+source daas_env/bin/activate  # On Windows: daas_env\Scripts\activate
 ```
 
 4. Install the project dependencies:
@@ -201,10 +201,10 @@ python -m pytest tests/test_webapp.py
 
 ## Contributing
 
-We welcome contributions to improve DAAIS! Here's how you can help:
+We welcome contributions to improve DAAS! Here's how you can help:
 
 - **Join the Discussions:** Share your insights, provide feedback, or ask questions.
-- **Report Issues:** Submit bugs found or log feature requests for the DAAIS project.
+- **Report Issues:** Submit bugs found or log feature requests for the DAAS project.
 - **Submit Pull Requests:** Review open PRs, and submit your own PRs.
 
 ### Contributing Guidelines
