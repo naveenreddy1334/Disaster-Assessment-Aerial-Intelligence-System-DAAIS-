@@ -38,17 +38,17 @@ Disaster Assessment Aerial System (DAAS) aims to:
 
 ### Fire Detection
 <p align="center">
-  <img src="https://github.com/naveenreddy1334/Disaster-Assessment-Aerial-Intelligence-System-DAAS-/blob/main/Fire.gif?raw=true" alt="Fire Detection Demo" />
+  <img src="https://github.com/naveenreddy1334/Disaster-Assessment-Aerial-System-DAAS-/blob/main/Fire.gif?raw=true" alt="Fire Detection Demo" />
 </p>
 
 ### Flood Detection
 <p align="center">
-  <img src="https://github.com/naveenreddy1334/Disaster-Assessment-Aerial-Intelligence-System-DAAS-/blob/main/Flood.gif?raw=true" alt="Flood Detection Demo" />
+  <img src="https://github.com/naveenreddy1334/Disaster-Assessment-Aerial-System-DAAS-/blob/main/Flood.gif?raw=true" alt="Flood Detection Demo" />
 </p>
 
 ### Thermal Analysis
 <p align="center">
-  <img src="https://github.com/naveenreddy1334/Disaster-Assessment-Aerial-Intelligence-System-DAAS-/blob/main/Thermal.gif?raw=true" alt="Thermal Analysis Demo" />
+  <img src="https://github.com/naveenreddy1334/Disaster-Assessment-Aerial-System-DAAS-/blob/main/Thermal.gif?raw=true" alt="Thermal Analysis Demo" />
 </p>
 
 
